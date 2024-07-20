@@ -1,215 +1,192 @@
-"use client"
+'use client'
 
-import { type Dispatch, type SetStateAction, useState } from "react"
-import { Dialog, DialogContent, DialogTrigger } from "./ui/dialog"
-import { Button } from "./ui/button"
-import { useRouter } from "next/navigation"
-import { trpc } from "@/app/_trpc/client"
+import { useState } from 'react'
+import {
+  Dialog,
+  DialogContent,
+  DialogTrigger,
+} from './ui/dialog'
+import { Button } from './ui/button'
 
-import Dropzone from "react-dropzone"
-import { Cloud, FileIcon, Loader2 } from "lucide-react"
-import { Progress } from "./ui/progress"
-import { useUploadThing } from "@/lib/uploadthing"
-import { toast } from "./ui/use-toast"
-
-type UploadDropzoneProps = {
-    isSubscribed: boolean
-    isUploading: boolean
-    setIsUploading: Dispatch<SetStateAction<boolean>>
-}
+import Dropzone from 'react-dropzone'
+import { Cloud, File, Loader2 } from 'lucide-react'
+import { Progress } from './ui/progress'
+import { useUploadThing } from '@/lib/uploadthing'
+import { useToast } from './ui/use-toast'
+import { trpc } from '@/app/_trpc/client'
+import { useRouter } from 'next/navigation'
 
 const UploadDropzone = ({
-    isSubscribed,
-    isUploading,
-    setIsUploading,
-}: UploadDropzoneProps) => {
-    const router = useRouter()
+  isSubscribed,
+}: {
+  isSubscribed: boolean
+}) => {
+  const router = useRouter()
 
-    const [error, setError] = useState("")
-    const [uploadProgress, setUploadProgress] = useState(0)
+  const [isUploading, setIsUploading] =
+    useState<boolean>(false)
+  const [uploadProgress, setUploadProgress] =
+    useState<number>(0)
+  const { toast } = useToast()
 
-    const { startUpload } = useUploadThing(
-        isSubscribed ? "proPlanUploader" : "freePlanUploader",
-        {
-            onUploadError: err => {
-                setIsUploading(false)
-                if (err.code === "BAD_REQUEST")
-                    setError("Only PDF files are allowed.")
+  const { startUpload } = useUploadThing(
+    isSubscribed ? 'proPlanUploader' : 'freePlanUploader'
+  )
 
-                if (
-                    err.code === "INTERNAL_SERVER_ERROR" ||
-                    err.code === "TOO_LARGE"
-                )
-                    setError("File is too large.")
-
-                if (
-                    err.code === "FILE_LIMIT_EXCEEDED" ||
-                    err.code === "TOO_MANY_FILES"
-                )
-                    setError("Too many files.")
-            },
-        }
-    )
-
-    const startSimulatedProgress = () => {
-        // reset upload progress
-        setError("")
-        setUploadProgress(0)
-
-        // update progress every half second
-        const interval = setInterval(() => {
-            setUploadProgress(prevUploadProgress => {
-                // stop updating progress if exceeds 95 (taking too long...)
-                if (prevUploadProgress >= 95) {
-                    clearInterval(interval)
-                    return prevUploadProgress
-                }
-
-                // update progress by 5
-                return prevUploadProgress + 5
-            })
-        }, 500)
-
-        return interval
+  const { mutate: startPolling } = trpc.getFile.useMutation(
+    {
+      onSuccess: (file) => {
+        router.push(`/dashboard/${file.id}`)
+      },
+      retry: true,
+      retryDelay: 500,
     }
+  )
 
-    const { mutate: startPolling } = trpc.getFile.useMutation({
-        onSuccess: file => {
-            router.push(`/dashboard/${file.id}`)
-        },
-        retry: true,
-        retryDelay: 500,
-    })
+  const startSimulatedProgress = () => {
+    setUploadProgress(0)
 
-    return (
-        <Dropzone
-            multiple={false}
-            onDropRejected={() => setError("Too many files.")}
-            onDrop={async acceptedFile => {
-                setIsUploading(true)
+    const interval = setInterval(() => {
+      setUploadProgress((prevProgress) => {
+        if (prevProgress >= 95) {
+          clearInterval(interval)
+          return prevProgress
+        }
+        return prevProgress + 5
+      })
+    }, 500)
 
-                const progressInterval = startSimulatedProgress()
+    return interval
+  }
 
-                // handle file upload
-                const res = await startUpload(acceptedFile)
+  return (
+    <Dropzone
+      multiple={false}
+      onDrop={async (acceptedFile) => {
+        setIsUploading(true)
 
-                if (!res) {
-                    return toast.error("Something went wrong!", "Please try again later.")
-                }
+        const progressInterval = startSimulatedProgress()
 
-                const [fileResponse] = res
+        // handle file uploading
+        const res = await startUpload(acceptedFile)
 
-                const key = fileResponse?.key
+        if (!res) {
+          return toast({
+            title: 'Something went wrong',
+            description: 'Please try again later',
+            variant: 'destructive',
+          })
+        }
 
-                if (!key) {
-                    return toast.error("Something went wrong!", {
-                        description: "Please try again later.",
-                    })
-                }
+        const [fileResponse] = res
 
-                clearInterval(progressInterval)
-                setUploadProgress(100)
+        const key = fileResponse?.key
 
-                startPolling({ key })
-            }}>
-            {({ getRootProps, acceptedFiles }) => (
-                <div
-                    {...getRootProps()}
-                    className='border h-64 m-4 border-dashed border-gray-300 rounded-lg'>
-                    <div className='flex items-center justify-center h-full w-full'>
-                        <label
-                            htmlFor='dropzone-file'
-                            className='flex flex-col items-center justify-center w-full h-full rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100'>
-                            <div className='flex flex-col items-center justify-center pt-5 pb-6'>
-                                <Cloud className='h-6 w-6 text-zinc-500 mb-2' />
-                                <p className='mb-2 text-sm text-zinc-700'>
-                                    <span className='font-semibold'>
-                                        Click to upload
-                                    </span>{" "}
-                                    or drag and drop.
-                                </p>
+        if (!key) {
+          return toast({
+            title: 'Something went wrong',
+            description: 'Please try again later',
+            variant: 'destructive',
+          })
+        }
 
-                                <p className='text-xs text-zinc-500'>
-                                    PDF (up to {isSubscribed ? "16" : "4"}MB)
-                                </p>
-                            </div>
+        clearInterval(progressInterval)
+        setUploadProgress(100)
 
-                            {/* render uploaded files */}
-                            {acceptedFiles && acceptedFiles[0] ? (
-                                <div className='max-w-xl bg-white flex items-center rounded-md overflow-hidden outline outline-[1px] outline-zinc-200 divide-x divide-zinc-200'>
-                                    <div className='px-3 py-2 h-full grid place-items-center'>
-                                        <FileIcon className='h-4 w-4 text-purple-500' />
-                                    </div>
+        startPolling({ key })
+      }}>
+      {({ getRootProps, getInputProps, acceptedFiles }) => (
+        <div
+          {...getRootProps()}
+          className='border h-64 m-4 border-dashed border-gray-300 rounded-lg'>
+          <div className='flex items-center justify-center h-full w-full'>
+            <label
+              htmlFor='dropzone-file'
+              className='flex flex-col items-center justify-center w-full h-full rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100'>
+              <div className='flex flex-col items-center justify-center pt-5 pb-6'>
+                <Cloud className='h-6 w-6 text-zinc-500 mb-2' />
+                <p className='mb-2 text-sm text-zinc-700'>
+                  <span className='font-semibold'>
+                    Click to upload
+                  </span>{' '}
+                  or drag and drop
+                </p>
+                <p className='text-xs text-zinc-500'>
+                  PDF (up to {isSubscribed ? "16" : "4"}MB)
+                </p>
+              </div>
 
-                                    {/* file name */}
-                                    <div className='px-3 py-2 h-full text-sm truncate'>
-                                        {acceptedFiles[0].name}
-                                    </div>
-                                </div>
-                            ) : null}
-
-                            {/* progress bar */}
-                            {isUploading ? (
-                                <div className='w-full mt-4 max-w-xs mx-auto'>
-                                    <Progress
-                                        value={uploadProgress}
-                                        className='h-1 w-full bg-zinc-200'
-                                        indicatorColor={
-                                            uploadProgress === 100
-                                                ? "bg-green-500"
-                                                : ""
-                                        }
-                                    />
-                                    {uploadProgress === 100 ? (
-                                        <div className='flex gap-1 items-center justify-center text-sm text-zinc-700 text-center pt-2'>
-                                            <Loader2 className='h-3 w-3 animate-spin' />
-                                            Redirecting...
-                                        </div>
-                                    ) : null}
-                                </div>
-                            ) : null}
-
-                            {/* error */}
-                            {error && error.length !== 0 ? (
-                                <p className='mt-4 mx-auto text-sm text-rose-500'>
-                                    {error}
-                                </p>
-                            ) : null}
-                        </label>
-                    </div>
+              {acceptedFiles && acceptedFiles[0] ? (
+                <div className='max-w-xs bg-white flex items-center rounded-md overflow-hidden outline outline-[1px] outline-zinc-200 divide-x divide-zinc-200'>
+                  <div className='px-3 py-2 h-full grid place-items-center'>
+                    <File className='h-4 w-4 text-blue-500' />
+                  </div>
+                  <div className='px-3 py-2 h-full text-sm truncate'>
+                    {acceptedFiles[0].name}
+                  </div>
                 </div>
-            )}
-        </Dropzone>
-    )
+              ) : null}
+
+              {isUploading ? (
+                <div className='w-full mt-4 max-w-xs mx-auto'>
+                  <Progress
+                    indicatorColor={
+                      uploadProgress === 100
+                        ? 'bg-green-500'
+                        : ''
+                    }
+                    value={uploadProgress}
+                    className='h-1 w-full bg-zinc-200'
+                  />
+                  {uploadProgress === 100 ? (
+                    <div className='flex gap-1 items-center justify-center text-sm text-zinc-700 text-center pt-2'>
+                      <Loader2 className='h-3 w-3 animate-spin' />
+                      Redirecting...
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <input
+                {...getInputProps()}
+                type='file'
+                id='dropzone-file'
+                className='hidden'
+              />
+            </label>
+          </div>
+        </div>
+      )}
+    </Dropzone>
+  )
 }
 
-export const UploadButton = ({ isSubscribed }: { isSubscribed: boolean }) => {
-    const [isOpen, setIsOpen] = useState(false)
-    const [isUploading, setIsUploading] = useState(false)
+const UploadButton = ({
+  isSubscribed,
+}: {
+  isSubscribed: boolean
+}) => {
+  const [isOpen, setIsOpen] = useState<boolean>(false)
 
-    return (
-        <Dialog
-            open={isOpen || isUploading}
-            onOpenChange={v => {
-                if (!v) setIsOpen(v)
-            }}>
-            <DialogTrigger
-                onClick={() => setIsOpen(true)}
-                asChild>
-                <Button
-                    disabled={isOpen || isUploading}
-                    aria-disabled={isOpen || isUploading}>
-                    Upload PDF
-                </Button>
-            </DialogTrigger>
+  return (
+    <Dialog
+      open={isOpen}
+      onOpenChange={(v) => {
+        if (!v) {
+          setIsOpen(v)
+        }
+      }}>
+      <DialogTrigger
+        onClick={() => setIsOpen(true)}
+        asChild>
+        <Button>Upload PDF</Button>
+      </DialogTrigger>
 
-            <DialogContent>
-                <UploadDropzone
-                    isSubscribed={isSubscribed}
-                    isUploading={isUploading}
-                    setIsUploading={setIsUploading}
-                />
-            </DialogContent>
-        </Dialog>
-    )
+      <DialogContent>
+        <UploadDropzone isSubscribed={isSubscribed} />
+      </DialogContent>
+    </Dialog>
+  )
 }
+
+export default UploadButton
